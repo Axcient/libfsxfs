@@ -697,5 +697,26 @@ int libfsxfs_debug_print_read_offsets(
 	return( 1 );
 }
 
+void libfsxfs_debug_dump_buffer(uint8_t *buffer, size_t size)
+{
+	size_t i, j;
+	for (i = 0; i < size; i += 16) {
+		libcnotify_printf("%08zx: ", i);
+		for (j = 0; j < 16; j++) {
+			if (i + j < size)
+				libcnotify_printf("%02x ", buffer[i + j]);
+			else
+				libcnotify_printf("   ");
+		}
+		libcnotify_printf(" |");
+		for (j = 0; j < 16; j++) {
+			if (i + j < size) {
+				unsigned char c = buffer[i + j];
+				libcnotify_printf("%c", (c >= 32 && c <= 126) ? c : '.');
+			}
+		}
+		libcnotify_printf("|\n");
+	}
+}
 #endif /* defined( HAVE_DEBUG_OUTPUT ) */
 
