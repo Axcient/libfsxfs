@@ -2326,28 +2326,6 @@ int libfsxfs_volume_get_file_entry_by_utf16_path(
 	return( result );
 }
 
-void setBit(uint8_t *bitmap, uint32_t cls)
-{
-	uint32_t num_byte = cls / 8;
-	uint8_t num_bit = cls % 8;
-	bitmap[num_byte] |= (1 << num_bit);
-}
-
-void setBitsMany(uint8_t *bitmap, uint32_t start, uint32_t count)
-{
-	for (uint32_t cls = start; cls < start + count; cls++)
-	{
-		setBit(bitmap, cls);
-	}
-}
-
-int isBitSet(uint8_t *bitmap, uint32_t cls)
-{
-	uint32_t num_byte = cls / 8;
-	uint8_t num_bit = cls % 8;
-	return !!(bitmap[num_byte] & (1 << num_bit));
-}
-
 /* Traverses an individual allocation group free-space B+ tree node recursively.
  * Returns 1 if successful or -1 on error.
  */
