@@ -697,7 +697,7 @@ int libfsxfs_debug_print_read_offsets(
 	return( 1 );
 }
 
-void libfsxfs_debug_dump_buffer(uint8_t *buffer, size_t size)
+void libfsxfs_debug_dump_buffer(const uint8_t *buffer, size_t size)
 {
 	size_t i, j;
 	for (i = 0; i < size; i += 16) {

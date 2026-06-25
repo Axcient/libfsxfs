@@ -77,7 +77,7 @@ int libfsxfs_debug_print_read_offsets(
      libcerror_error_t **error );
 
 void libfsxfs_debug_dump_buffer(
-		uint8_t *buffer,
+		const uint8_t *buffer,
 		size_t size);
 #endif /* defined( HAVE_DEBUG_OUTPUT ) */
 

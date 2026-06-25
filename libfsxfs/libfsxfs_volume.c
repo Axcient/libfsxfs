@@ -2329,7 +2329,7 @@ int libfsxfs_volume_get_file_entry_by_utf16_path(
 /* Traverses an individual allocation group free-space B+ tree node recursively.
  * Returns 1 if successful or -1 on error.
  */
-int libfsxfs_allocation_group_traverse_alloc_tree(
+static int libfsxfs_allocation_group_traverse_alloc_tree(
         libbfio_handle_t *file_io_handle,
         uint32_t ag_block_number,
         uint32_t ag_no,
