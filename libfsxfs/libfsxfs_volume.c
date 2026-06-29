@@ -2326,3 +2326,402 @@ int libfsxfs_volume_get_file_entry_by_utf16_path(
 	return( result );
 }
 
+/* Traverses an individual allocation group free-space B+ tree node recursively.
+ * Returns 1 if successful or -1 on error.
+ */
+static int libfsxfs_allocation_group_traverse_alloc_tree(
+        libbfio_handle_t *file_io_handle,
+        uint32_t ag_block_number,
+        uint32_t ag_no,
+        uint32_t ag_block_cnt,
+        uint32_t block_size,
+        uint16_t tree_level,
+        void *data,
+        void (*clear_callback)(void *data, uint32_t start, uint32_t blocks),
+        libcerror_error_t **error )
+{
+    uint8_t *ag_block      = NULL;
+    static char *function  = "libfsxfs_allocation_group_traverse_alloc_tree";
+    uint64_t physical_offset = 0;
+    size_t header_size     = 0;
+    ssize_t bytes_read     = 0;
+    uint16_t max_records   = 0;
+    uint16_t num_records   = 0;
+    uint16_t record_index  = 0;
+    uint32_t magic_number  = 0;
+
+    if( file_io_handle == NULL )
+    {
+        libcerror_error_set(
+                error,
+                LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+                LIBCERROR_ARGUMENT_ERROR_INVALID_VALUE,
+                "%s: invalid file I/O handle.",
+                function );
+
+        return( -1 );
+    }
+    if( clear_callback == NULL )
+    {
+        libcerror_error_set(
+                error,
+                LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+                LIBCERROR_ARGUMENT_ERROR_INVALID_VALUE,
+                "%s: invalid clear callback context handler.",
+                function );
+
+        return( -1 );
+    }
+
+    ag_block = (uint8_t *) memory_allocate( sizeof( uint8_t ) * block_size );
+
+    if( ag_block == NULL )
+    {
+        libcerror_error_set(
+                error,
+                LIBCERROR_ERROR_DOMAIN_MEMORY,
+                LIBCERROR_MEMORY_ERROR_INSUFFICIENT,
+                "%s: unable to allocate allocation group block storage buffer.",
+                function );
+
+        return( -1 );
+    }
+
+    physical_offset = ( (uint64_t) ag_no * ag_block_cnt * block_size ) + ( (uint64_t) ag_block_number * block_size );
+
+    bytes_read = libbfio_handle_read_buffer_at_offset(
+            file_io_handle,
+            ag_block,
+            block_size,
+            (off64_t) physical_offset,
+            error );
+
+    if( bytes_read != (ssize_t) block_size )
+    {
+        libcerror_error_set(
+                error,
+                LIBCERROR_ERROR_DOMAIN_IO,
+                LIBCERROR_IO_ERROR_READ_FAILED,
+                "%s: unable to read allocation tree block data at offset: %" PRIu64 ".",
+                function,
+                physical_offset );
+
+        memory_free( ag_block );
+        return( -1 );
+    }
+
+    byte_stream_copy_to_uint32_big_endian(
+            ( ag_block + LIBFSXFS_BB_OFFSET_MAGIC ),
+            magic_number );
+
+    if( magic_number == LIBFSXFS_BB_V5_MAGIC_NUMBER )
+    {
+        header_size = 56;
+        max_records = 505;
+    }
+    else if( magic_number == LIBFSXFS_BB_V4_MAGIC_NUMBER )
+    {
+        header_size = 18;
+        max_records = 509;
+    }
+    else
+    {
+        libcerror_error_set(
+                error,
+                LIBCERROR_ERROR_DOMAIN_RUNTIME,
+                LIBCERROR_RUNTIME_ERROR_UNSUPPORTED_VALUE,
+                "%s: unsupported or unrecognized B+ tree short block magic number: 0x%08" PRIx32 ".",
+                function,
+                magic_number );
+
+        memory_free( ag_block );
+        return( -1 );
+    }
+
+    byte_stream_copy_to_uint16_big_endian(
+            ( ag_block + LIBFSXFS_BB_OFFSET_NUMRECS ),
+            num_records );
+
+    if( tree_level > 1 )
+    {
+        size_t key_size            = 4;
+        size_t ptr_size            = 4;
+        size_t pointer_array_start = header_size + ( max_records * key_size );
+
+        for( record_index = 0; record_index < num_records; record_index++ )
+        {
+            uint32_t child_ag_block = 0;
+            size_t pointer_offset   = pointer_array_start + ( record_index * ptr_size );
+
+            byte_stream_copy_to_uint32_big_endian( ( ag_block + pointer_offset ), child_ag_block );
+
+            if( libfsxfs_allocation_group_traverse_alloc_tree(
+                        file_io_handle,
+                        child_ag_block,
+                        ag_no,
+                        ag_block_cnt,
+                        block_size,
+                        tree_level - 1,
+                        data,
+                        clear_callback,
+                        error ) != 1 )
+            {
+                libcerror_error_set(
+                        error,
+                        LIBCERROR_ERROR_DOMAIN_RUNTIME,
+                        LIBCERROR_RUNTIME_ERROR_GET_FAILED,
+                        "%s: unable to parse child index node at nested entry point block %" PRIu32 ".",
+                        function,
+                        child_ag_block );
+
+                memory_free( ag_block );
+                return( -1 );
+            }
+        }
+    }
+    else if( tree_level == 1 )
+    {
+        size_t rec_size = 8;
+
+        for( record_index = 0; record_index < num_records; record_index++ )
+        {
+            uint32_t start_block = 0;
+            uint32_t block_count = 0;
+            size_t rec_offset    = header_size + ( record_index * rec_size );
+
+            byte_stream_copy_to_uint32_big_endian( ( ag_block + rec_offset ), start_block );
+            byte_stream_copy_to_uint32_big_endian( ( ag_block + rec_offset + 4 ), block_count );
+            // Convert AG-relative start_block to the physical one
+            clear_callback( data, ag_no * ag_block_cnt + start_block, block_count );
+        }
+    }
+
+    memory_free( ag_block );
+    return( 1 );
+}
+
+/* Iterates across every active filesystem allocation group, extracting unallocated extents.
+ * Returns 1 if successful or -1 on error.
+ */
+int libfsxfs_volume_free_blocks_iterate(
+        libfsxfs_volume_t *volume,
+        void *data,
+        void (*clear_callback)(void *data, uint32_t start, uint32_t blocks),
+        libcerror_error_t **error )
+{
+    libfsxfs_internal_volume_t *internal_volume = NULL;
+    uint8_t *agf_buffer                         = NULL;
+    uint8_t *agfl_buffer                        = NULL;
+    static char *function                       = "libfsxfs_volume_free_blocks_iterate";
+    off64_t ag_offset                           = 0;
+    off64_t agf_offset                          = 0;
+    off64_t agfl_offset                         = 0;
+    ssize_t bytes_read                          = 0;
+    size_t agfl_header_size                     = 0;
+    uint32_t ag_block_cnt                       = 0;
+    uint32_t max_ag_no                          = 0;
+    uint32_t block_size                         = 0;
+    uint32_t sector_size                        = 0;
+    uint32_t max_agfl_slots                     = 0;
+    int ag_no                                   = 0;
+    int ret                                     = 0;
+
+    if( volume == NULL )
+    {
+        libcerror_error_set(
+                error,
+                LIBCERROR_ERROR_DOMAIN_ARGUMENTS,
+                LIBCERROR_RUNTIME_ERROR_VALUE_MISSING,
+                "%s: invalid volume context reference pointer.",
+                function );
+
+        return( -1 );
+    }
+
+    internal_volume = (libfsxfs_internal_volume_t *) volume;
+
+    ag_block_cnt = internal_volume->superblock->allocation_group_size;
+    block_size   = internal_volume->superblock->block_size;
+    sector_size  = internal_volume->superblock->sector_size;
+    max_ag_no    = internal_volume->superblock->number_of_allocation_groups;
+
+    agf_buffer  = (uint8_t *) memory_allocate( sizeof( uint8_t ) * sector_size );
+    agfl_buffer = (uint8_t *) memory_allocate( sizeof( uint8_t ) * sector_size );
+
+    if( ( agf_buffer == NULL ) || ( agfl_buffer == NULL ) )
+    {
+        libcerror_error_set(
+                error,
+                LIBCERROR_ERROR_DOMAIN_MEMORY,
+                LIBCERROR_MEMORY_ERROR_INSUFFICIENT,
+                "%s: unable to allocate local sector structural reference buffers.",
+                function );
+
+        if( agf_buffer != NULL ) memory_free( agf_buffer );
+        if( agfl_buffer != NULL ) memory_free( agfl_buffer );
+        return( -1 );
+    }
+
+    for( ag_no = 0; ag_no < (int) max_ag_no; ag_no++ )
+    {
+        libfsxfs_internal_agf_t agf_metadata;
+        libfsxfs_internal_agfl_t agfl_metadata;
+
+        ag_offset   = (off64_t) ag_no * ag_block_cnt * block_size;
+        agf_offset  = ag_offset + ( (off64_t) 1 * sector_size );
+        agfl_offset = ag_offset + ( (off64_t) 3 * sector_size );
+
+        bytes_read = libbfio_handle_read_buffer_at_offset(
+                internal_volume->file_io_handle,
+                agf_buffer,
+                sector_size,
+                agf_offset,
+                error );
+
+        if( bytes_read != (ssize_t) sector_size )
+        {
+            libcerror_error_set(
+                    error,
+                    LIBCERROR_ERROR_DOMAIN_IO,
+                    LIBCERROR_IO_ERROR_READ_FAILED,
+                    "%s: unable to read AGF primary metadata sector block at offset %" PRIu64 ".",
+                    function,
+                    agf_offset );
+
+            goto error_cleanup;
+        }
+
+        byte_stream_copy_to_uint32_big_endian( ( agf_buffer + LIBFSXFS_AGF_OFFSET_MAGIC ), agf_metadata.magicnum );
+
+        if( agf_metadata.magicnum != LIBFSXFS_AGF_MAGIC_NUMBER )
+        {
+            libcerror_error_set(
+                    error,
+                    LIBCERROR_ERROR_DOMAIN_RUNTIME,
+                    LIBCERROR_RUNTIME_ERROR_UNSUPPORTED_VALUE,
+                    "%s: invalid or corrupted allocation group framework signature validation map.",
+                    function );
+
+            goto error_cleanup;
+        }
+
+        byte_stream_copy_to_uint32_big_endian( ( agf_buffer + LIBFSXFS_AGF_OFFSET_SEQUENCE_NO ), agf_metadata.seqno );
+        byte_stream_copy_to_uint32_big_endian( ( agf_buffer + LIBFSXFS_AGF_OFFSET_LENGTH ), agf_metadata.length );
+        byte_stream_copy_to_uint32_big_endian( ( agf_buffer + LIBFSXFS_AGF_OFFSET_BNOBT_ROOT ), agf_metadata.bnobt_root );
+        byte_stream_copy_to_uint32_big_endian( ( agf_buffer + LIBFSXFS_AGF_OFFSET_CNTBT_ROOT ), agf_metadata.cntbt_root );
+        byte_stream_copy_to_uint32_big_endian( ( agf_buffer + LIBFSXFS_AGF_OFFSET_BNOBT_LEVEL ), agf_metadata.bnobt_level );
+        byte_stream_copy_to_uint32_big_endian( ( agf_buffer + LIBFSXFS_AGF_OFFSET_CNTBT_LEVEL ), agf_metadata.cntbt_level );
+        byte_stream_copy_to_uint32_big_endian( ( agf_buffer + LIBFSXFS_AGF_OFFSET_FLFIRST ), agf_metadata.fl_first );
+        byte_stream_copy_to_uint32_big_endian( ( agf_buffer + LIBFSXFS_AGF_OFFSET_FLLAST ), agf_metadata.fl_last );
+        byte_stream_copy_to_uint32_big_endian( ( agf_buffer + LIBFSXFS_AGF_OFFSET_FLCOUNT ), agf_metadata.fl_count );
+        byte_stream_copy_to_uint32_big_endian( ( agf_buffer + LIBFSXFS_AGF_OFFSET_FREE_BLOCKS ), agf_metadata.freeblks );
+
+#if defined( HAVE_DEBUG_OUTPUT )
+        libcnotify_printf( "AGF seqno: %" PRIu32 "\n", agf_metadata.seqno );
+        libcnotify_printf( "BNOBT root block: %" PRIu32 "\n", agf_metadata.bnobt_root );
+        libcnotify_printf( "BNOBT B+ tree height: %" PRIu32 "\n", agf_metadata.bnobt_level );
+        libcnotify_printf( "Total AG free blocks: %" PRIu32 "\n", agf_metadata.freeblks );
+#endif
+
+        bytes_read = libbfio_handle_read_buffer_at_offset(
+                internal_volume->file_io_handle,
+                agfl_buffer,
+                sector_size,
+                agfl_offset,
+                error );
+
+        if( bytes_read != (ssize_t) sector_size )
+        {
+            libcerror_error_set(
+                    error,
+                    LIBCERROR_ERROR_DOMAIN_IO,
+                    LIBCERROR_IO_ERROR_READ_FAILED,
+                    "%s: unable to read allocation group free list (AGFL) array payload.",
+                    function );
+
+            goto error_cleanup;
+        }
+
+
+#if defined( HAVE_DEBUG_OUTPUT )
+        libfsxfs_debug_dump_buffer( agfl_buffer, sector_size );
+#endif
+
+        byte_stream_copy_to_uint32_big_endian( ( agfl_buffer + LIBFSXFS_AGFL_OFFSET_MAGIC ), agfl_metadata.agfl_magicnum );
+        byte_stream_copy_to_uint32_big_endian( ( agfl_buffer + LIBFSXFS_AGFL_OFFSET_SEQNO ), agfl_metadata.agfl_seqno );
+
+        /* 36-byte V5 header is only present if magic exists */
+        if( agfl_metadata.agfl_magicnum == LIBFSXFS_AGFL_MAGIC_NUMBER )
+        {
+            agfl_header_size = 36;
+        }
+        else
+        {
+            agfl_header_size = 0;
+        }
+
+        max_agfl_slots = ( sector_size - agfl_header_size ) / sizeof (uint32_t );
+
+#if defined( HAVE_DEBUG_OUTPUT )
+        libcnotify_printf(
+                "fl_start: %" PRIu32 ", fl_count: %" PRIu32 ", fl_last: %" PRIu32 "\n",
+                agf_metadata.fl_first,
+                agf_metadata.fl_count,
+                agf_metadata.fl_last );
+#endif
+
+        if( agf_metadata.fl_count > 0 )
+        {
+            uint32_t slot_idx    = agf_metadata.fl_first;
+            uint32_t items_found = 0;
+
+            while( items_found < agf_metadata.fl_count )
+            {
+                uint32_t active_block = 0;
+                size_t cell_offset    = agfl_header_size + ( slot_idx * sizeof( uint32_t ) );
+
+                byte_stream_copy_to_uint32_big_endian( ( agfl_buffer + cell_offset ), active_block );
+                if( active_block != 0xffffffff )
+                {
+                    clear_callback( data, active_block, 1 );
+                }
+
+                slot_idx = ( slot_idx + 1 ) % max_agfl_slots;
+                items_found++;
+            }
+        }
+
+        ret = libfsxfs_allocation_group_traverse_alloc_tree(
+                internal_volume->file_io_handle,
+                agf_metadata.bnobt_root,
+                (uint32_t) ag_no,
+                ag_block_cnt,
+                block_size,
+                (uint16_t) agf_metadata.bnobt_level,
+                data,
+                clear_callback,
+                error );
+
+        if( ret != 1 )
+        {
+            libcerror_error_set(
+                    error,
+                    LIBCERROR_ERROR_DOMAIN_RUNTIME,
+                    LIBCERROR_RUNTIME_ERROR_GET_FAILED,
+                    "%s: allocation tree parsing pipeline failure encountered on AG %d.",
+                    function,
+                    ag_no );
+
+            goto error_cleanup;
+        }
+    }
+
+    memory_free( agf_buffer );
+    memory_free( agfl_buffer );
+    return( 1 );
+
+error_cleanup:
+    if( agf_buffer != NULL )  memory_free( agf_buffer );
+    if( agfl_buffer != NULL ) memory_free( agfl_buffer );
+    return( -1 );
+}

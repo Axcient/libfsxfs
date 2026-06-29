@@ -76,6 +76,9 @@ int libfsxfs_debug_print_read_offsets(
      libbfio_handle_t *file_io_handle,
      libcerror_error_t **error );
 
+void libfsxfs_debug_dump_buffer(
+		const uint8_t *buffer,
+		size_t size);
 #endif /* defined( HAVE_DEBUG_OUTPUT ) */
 
 #if defined( __cplusplus )

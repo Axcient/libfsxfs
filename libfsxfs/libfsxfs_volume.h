@@ -210,6 +210,94 @@ int libfsxfs_volume_get_file_entry_by_utf16_path(
      libfsxfs_file_entry_t **file_entry,
      libcerror_error_t **error );
 
+/* XFS Magic Signatures */
+#define LIBFSXFS_AGF_MAGIC_NUMBER           0x58414746
+#define LIBFSXFS_AGFL_MAGIC_NUMBER          0x5841464c
+#define LIBFSXFS_BB_V4_MAGIC_NUMBER         0x41425442
+#define LIBFSXFS_BB_V5_MAGIC_NUMBER         0x41423342
+// ...
+
+/* AGF Offsets */
+#define LIBFSXFS_AGF_OFFSET_MAGIC           0x00
+#define LIBFSXFS_AGF_OFFSET_VERSION         0x04
+#define LIBFSXFS_AGF_OFFSET_SEQUENCE_NO     0x08
+#define LIBFSXFS_AGF_OFFSET_LENGTH          0x0c
+#define LIBFSXFS_AGF_OFFSET_BNOBT_ROOT      0x10
+#define LIBFSXFS_AGF_OFFSET_CNTBT_ROOT      0x14
+#define LIBFSXFS_AGF_OFFSET_BNOBT_LEVEL     0x1c
+#define LIBFSXFS_AGF_OFFSET_CNTBT_LEVEL     0x20
+#define LIBFSXFS_AGF_OFFSET_FLFIRST         0x28
+#define LIBFSXFS_AGF_OFFSET_FLLAST          0x2c
+#define LIBFSXFS_AGF_OFFSET_FLCOUNT         0x30
+#define LIBFSXFS_AGF_OFFSET_FREE_BLOCKS     0x34
+#define LIBFSXFS_AGF_OFFSET_LONGEST         0x38
+#define LIBFSXFS_AGF_OFFSET_BTREE_BLOCKS    0x3c
+
+/* B+ Tree Block Offsets */
+#define LIBFSXFS_BB_OFFSET_MAGIC			0x0
+#define LIBFSXFS_BB_OFFSET_LEVEL			0x4
+#define LIBFSXFS_BB_OFFSET_NUMRECS			0x6
+#define LIBFSXFS_BB_OFFSET_LFSBLG			0x0a
+#define LIBFSXFS_BB_OFFSET_RTSBLG			0xe
+// ...
+
+/* AGFL Offsets */
+#define LIBFSXFS_AGFL_OFFSET_MAGIC			0x0
+#define LIBFSXFS_AGFL_OFFSET_SEQNO			0x4
+// ...
+
+typedef struct libfsxfs_internal_agf libfsxfs_internal_agf_t;
+
+struct libfsxfs_internal_agf {
+    uint32_t magicnum;
+    uint32_t version;
+    uint32_t seqno;
+    uint32_t length;
+    uint32_t bnobt_root;
+    uint32_t cntbt_root;
+    uint32_t revbt_root;
+    uint32_t bnobt_level;
+    uint32_t cntbt_level;
+    uint32_t revbt_level;
+    uint32_t fl_first;
+    uint32_t fl_last;
+    uint32_t fl_count;
+    uint32_t freeblks;
+    uint32_t longest;
+    uint32_t btreeblks;
+};
+
+typedef struct libfsxfs_internal_agfl libfsxfs_internal_agfl_t;
+
+struct libfsxfs_internal_agfl {
+    uint32_t        agfl_magicnum;
+    uint32_t        agfl_seqno;
+    uint8_t         agfl_uuid[16];
+    uint64_t        agfl_lsn;
+    uint32_t        agfl_crc;
+};
+
+typedef struct xfs_btree_sblock xfs_btree_sblock_t;
+
+struct xfs_btree_sblock {
+    uint32_t magic;
+    uint16_t level;
+    uint16_t numrecs;
+    uint32_t leftsib;
+    uint32_t rightsib;
+    /* version 5 filesystem fields start here */
+    uint64_t blkno;
+    uint64_t lsn;
+    uint8_t uuid[16];
+    uint32_t owner;
+    uint32_t crc;
+};
+
+int libfsxfs_volume_free_blocks_iterate(
+        libfsxfs_volume_t *volume,
+        void *data,
+        void (*clear_callback)(void *data, uint32_t start, uint32_t blocks),
+        libcerror_error_t **error );
 #if defined( __cplusplus )
 }
 #endif
